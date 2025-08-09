@@ -15,6 +15,8 @@ interface IOption {
   sampleRate: number
   // 是否静音
   isMute: boolean
+  // 音频事件上报URL
+  audioEventUrl?: string
 }
 interface ITypedArrays {
   Float32: typeof Float32Array
@@ -67,6 +69,7 @@ export class Player {
 
   _firstStartRelativeTime?: number
   _firstStartAbsoluteTime?: number
+  _isPlaying: boolean = false
 
   constructor(option: IOption, ee: EventEmitter) {
     this.ee = ee
@@ -77,6 +80,10 @@ export class Player {
     await this.audioCtx!.resume()
   }
   destroy() {
+    if (this._isPlaying) {
+      this._isPlaying = false
+      this.sendAudioEvent(0)
+    }
     this.samplesList = []
     this.audioCtx?.close()
     this.audioCtx = undefined
@@ -118,6 +125,12 @@ export class Player {
       this.bufferSource.onended = () => {
         if (!end_of_batch && index === this.samplesList.length - 1) {
           this.ee.emit(PlayerEventTypes.Player_WaitNextAudioClip)
+        } else if (end_of_batch && index === this.samplesList.length - 1) {
+          // 最后一个音频片段结束，发送停止事件
+          if (this._isPlaying) {
+            this._isPlaying = false
+            this.sendAudioEvent(0)
+          }
         }
         this.option.onended()
       }
@@ -161,6 +174,9 @@ export class Player {
     if (this._firstStartRelativeTime === undefined) {
       this._firstStartRelativeTime = this.startTime
       this.ee.emit(PlayerEventTypes.Player_StartSpeaking, this)
+      // 发送音频播放开始事件
+      this._isPlaying = true
+      this.sendAudioEvent(1)
     }
     this.startTime! += audioBuffer.duration
   }
@@ -172,14 +188,14 @@ export class Player {
   }
   initAudioContext() {
     // 初始化音频上下文的东西
-    this.audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+    this.audioCtx = new ((window as any).AudioContext || (window as any).webkitAudioContext)()
     // 控制音量的 GainNode
     // https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/createGain
-    this.gainNode = this.audioCtx.createGain()
+    this.gainNode = this.audioCtx!.createGain()
     this.gainNode.gain.value = this.option.isMute ? 0 : 1
-    this.gainNode.connect(this.audioCtx.destination)
-    this.startTime = this.audioCtx.currentTime
-    this.analyserNode = this.audioCtx.createAnalyser()
+    this.gainNode.connect(this.audioCtx!.destination)
+    this.startTime = this.audioCtx!.currentTime
+    this.analyserNode = this.audioCtx!.createAnalyser()
     this.analyserNode.fftSize = this.option.fftSize
   }
   setMute(isMute: boolean) {
@@ -201,6 +217,25 @@ export class Player {
 
   volume(volume: number) {
     this.gainNode!.gain.value = volume
+  }
+
+  async sendAudioEvent(eventValue: number) {
+    if (!this.option.audioEventUrl) {
+      return
+    }
+    
+    try {
+      await fetch(this.option.audioEventUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ audioEvent: eventValue })
+      })
+    } catch (error) {
+      // 静默处理错误，避免影响音频播放
+      console.warn('Failed to send audio event:', error)
+    }
   }
   _getFormattedValue(data: Int8Array | Int16Array | Int32Array | Float32Array) {
     const TargetArray = this.typedArray!
