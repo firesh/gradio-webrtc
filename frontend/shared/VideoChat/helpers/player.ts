@@ -56,8 +56,10 @@ export class Player {
     channels: 1, // 声道数
     sampleRate: 8000, // 采样率 单位Hz
     fftSize: 2048, // analyserNode fftSize
-    onended: () => {}
+    onended: () => {},
+    audioEventUrl: 'http://localhost:8000/notify',
   }
+
   samplesList: ISamples[] = []
 
   startTime?: number
